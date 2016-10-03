@@ -1,0 +1,419 @@
+
+setwd("R:/rsrch/cb751/lab/Simina")
+##############################################################################################################################
+######################################### FLOWERING #########################################################################
+##############################################################################################################################
+
+setwd("R:/rsrch/cb751/lab/Simina")
+
+all.results <- read.csv("Data/Flowers/Fourier_all_species.csv") 
+all.results$sp.site <- as.factor(paste0(all.results$species, ".", all.results$site))
+
+# cond1 <- all.results$site == "Mpala" 
+# all.results <- all.results[!cond1,] # excludes Mpala from the analysis 
+
+table<-data.frame(table(all.results$species,all.results$site))
+table1<-subset(table, Freq < 5 & Freq!=0)
+table1$sp.site <- as.factor(paste0(table1$Var1, ".", table1$Var2))
+
+all.results<-subset(all.results, !(sp.site %in% table1$sp.site)) #now only species that have more than 5 trees
+
+Table<-table(all.results$species, all.results$site) # see commun species
+morethan1site <- unname(apply(Table,1,function(x) sum(length(x[x>0]))))
+NROW(Table[morethan1site >1,])
+More_than_one_site<-Table[morethan1site >1,]
+write.csv(More_than_one_site,"Data/Flowers/Table_common_species.csv")  
+
+############################################################################################
+############## FREQUENCY ############################
+############################################################################################
+
+frq.mod.full <- glm(freq_max ~ sp.site-1, data = all.results)
+frq.mod.no.int <- glm(freq_max ~ species+site-1, data = all.results)
+anova(frq.mod.full,frq.mod.no.int, test = "Chi")
+drop1(frq.mod.no.int, test = "Chi")
+freq<- update(frq.mod.no.int, .~. - species)
+
+summary(frq.mod.no.int)
+summary(frq.mod.full)
+
+freq<-as.data.frame(summary(frq.mod.full))
+
+###### Results ###
+###### Frequency is Species and site specific 
+############################################################################################
+############## PREDICTABILITY ############################
+############################################################################################
+
+pred.mod.full <- glm(spec_max_norm ~ sp.site-1, data = all.results)
+pred.mod.no.int <- glm(spec_max_norm ~ species+site-1, data = all.results)
+#pred <- glm(spec_max_norm ~ site-1, data = all.results)
+anova(pred.mod.full, pred.mod.no.int, test = "Chi")
+drop1(pred.mod.no.int, test = "Chi")
+
+summary(pred.mod.full)
+summary(pred.mod.no.int)
+
+###### Results ###
+###### Predictability is Species and site specific
+
+############################################################################################
+############## PHASE ############################
+############################################################################################
+Phase <- read.csv("Data/Flowers/F_6and12.csv")
+# cond2 <- Phase$site == "Mpala" 
+# Phase<- Phase[!cond2,]
+Phase$sp.site <- as.factor(paste0(Phase$species, ".", Phase$site))
+
+table<-data.frame(table(Phase$species,Phase$site))
+table1<-subset(table, Freq < 5 & Freq!=0)
+table1$sp.site <- as.factor(paste0(table1$Var1, ".", table1$Var2))
+
+Phase<-subset(Phase, !(sp.site %in% table1$sp.site)) #now only species that have more than 5 trees
+
+#PHASE
+phase.mod.full <- glm(phase ~ sp.site-1, data = Phase)
+phase.mod.no.int <- glm(phase ~ species + site-1, data = Phase)
+anova(phase.mod.full, phase.mod.no.int, test = "Chi")
+drop1(phase.mod.no.int, test = "Chi")
+
+
+summary(phase.mod.full)
+summary(phase.mod.no.int)
+
+###### Results ###
+###### Phase is Species and site specific
+
+#### This analysis shows that frequency, predictability and phase are species and site specific 
+#### Next stage is to detect which species present at multiple sites drive the change. 
+
+########################################################################################################
+########################################################################################################
+##################### select the significant species / FLOWERING  ####################################################
+########################################################################################################
+########################################################################################################
+
+Frequency.H1 <- read.csv("Data/Flowers/H1 Frequency.csv")
+data <- Frequency.H1
+
+species <- unique(data$species)
+
+species.list <- list()
+
+for (sp in species){
+  dat <- data[data$species == sp,]
+  dat$l <- dat$u <- NA
+  for (i in 1:NROW(dat)){
+    dat$l[i] <- (sapply(dat[i,7] , function(x) {i %in% which( dat[-i,7] <= x & x <= dat[-i,8]) }))
+    dat$u[i] <- (sapply(dat[i,8] , function(x) {i %in% which( dat[-i,7] <= x & x <= dat[-i,8]) }))
+  }
+  species.list[[sp]] <- dat 
+}
+
+
+new.dat <- do.call(rbind, unname(species.list))
+
+write.csv(new.dat,"Data/significant common species frequency flower.csv")
+# this is an example for frequency. Same code was applied for predictability and phase 
+
+###################################################################################################################################
+###################################### FLOWERING ##################################################################################
+###################################################################################################################################
+
+###################################################################################################################################
+############################################### To use for HYPOTHESIS 1 ##########################################################
+###################################################################################################################################
+
+############################################ violin plot for species shared betrween multiple sites  ###################################################
+
+Common_Species <- read.csv("Data/Flowers/Table_common_species.csv")#Selected in Excel 
+# if you want to jump straight to ploting common species, upload the results table called: Fourier_all_species
+
+all.results <- read.csv("Data/Flowers/Fourier_all_species.csv",stringsAsFactors=FALSE)
+all.results$sp.site <- as.factor(paste0(all.results$species, ".", all.results$site))
+cond1 <- all.results$site == "Mpala" 
+all.results <- all.results[!cond1,] # excludes Mpala from the analysis 
+
+table<-data.frame(table(all.results$species,all.results$site))
+table1<-subset(table, Freq < 5 & Freq!=0)
+table1$sp.site <- as.factor(paste0(table1$Var1, ".", table1$Var2))
+
+all.results<-subset(all.results, !(sp.site %in% table1$sp.site)) #now only species that have more than 5 trees
+
+New_results<-all.results
+New_results<-subset(New_results, species %in% Common_Species$X) #1954 individuals and 45 common species
+
+
+####################################################################################################################################
+################################################################ frequency #########################################################
+####################################################################################################################################
+
+# 45 common species - 13 significant - see folder Frequenxy => H1 higlited with ~
+
+for (S in unique(New_results$species)){
+  test.dat <- New_results[New_results$species == S,]
+  
+  # the plot
+  assign(paste(S, "_box", sep=""),ggplot(test.dat, aes(x= site, y=freq_in_months)) +
+           geom_violin(fill = "lightskyblue1", colour = "midnightblue",trim=FALSE,scale="width",adjust=0.5,bw=2)+
+           labs(y="Frequency (months) ") +
+           labs(x="Site") +
+           ggtitle(S)+
+           scale_y_continuous(breaks=c(0,3,6,12,18,24,30,40,54))+
+           geom_text(stat = "count", aes(label = ..count.., y=(..count..-..count..)+5),vjust=0,size=5,colour="black", fontface="bold")+
+           geom_hline(yintercept=c(3,6, 12, 18, 24),linetype="dotted")+
+           theme_classic()+
+           theme(plot.title = element_text(size = 25,face = "italic"),
+                 axis.title.x = element_text(size = 18),
+                 axis.title.y = element_text(size = 18))+
+           theme(axis.text = element_text(colour = "black", size=14))
+  )
+  
+  ggsave(filename= paste(getwd(), "/Data/Flowers/Frequency/", S, "_freq.jpg", sep=""),
+         width=10, height=6, units="in", dpi=300)
+  
+}
+
+######################################################################################################################################
+##################################################### predictability #################################################################
+#######################################################################################################################################
+
+for (S in unique(New_results$species)){
+  test.dat <- New_results[New_results$species == S,]
+  
+  # the plot
+  assign(paste(S, "_boxi", sep=""),ggplot(test.dat, aes(x= site, y=spec_max_norm)) +
+           geom_violin(fill = "yellowgreen", colour = "springgreen4",trim=FALSE,scale="width",adjust=0.5,bw=0.4)+
+           labs(y="Fidelity for a particular frequency") +
+           labs(x="Site") +
+           ggtitle(S)+
+           #scale_y_continuous(limits = c(0, 25))+
+           geom_text(stat = "count", aes(label = ..count.., y=(..count..-..count..)+5),vjust=0,size=5,colour="black", fontface="bold")+
+           theme_classic()+
+           theme(plot.title = element_text(size = 25,face = "italic"),
+                 axis.title.x = element_text(size = 18),
+                 axis.title.y = element_text(size = 18))+
+           theme(axis.text = element_text(colour = "black", size=14))
+  )
+  
+  ggsave(filename= paste(getwd(), "/Data/Flowers/Predictability/", S, "_predictability.jpg", sep=""),
+         width=10, height=6, units="in", dpi=300)
+  
+}
+
+####################################################################################################################################
+################################################################ phase ##############################################################
+#####################################################################################################################################
+
+Phase <- read.csv("Data/Flowers/F_6and12.csv")
+cond2 <- Phase$site == "Mpala" 
+Phase<- Phase[!cond2,]
+Phase$sp.site <- as.factor(paste0(Phase$species, ".", Phase$site))
+
+table<-data.frame(table(Phase$species,Phase$site))
+table1<-subset(table, Freq < 5 & Freq!=0) #remove sp with less than 5 individuals 
+table1$sp.site <- as.factor(paste0(table1$Var1, ".", table1$Var2))
+
+Phase<-subset(Phase, !(sp.site %in% table1$sp.site)) #now only species that have more than 5 trees
+
+Table<-table(Phase$species, Phase$site) # see commun species
+morethan1site <- unname(apply(Table,1,function(x) sum(length(x[x>0]))))
+NROW(Table[morethan1site >1,])
+More_than_one_site<-Table[morethan1site >1,]
+write.csv(More_than_one_site,"Data/Flowers/Table_common_species_6&12fr.csv")  
+
+New_results<-Phase
+
+Common_Species <- read.csv("Data/Flowers/Table_common_species_6&12fr.csv")#Selected in Excel 
+New_results<-subset(New_results, species %in% Common_Species$X) 
+recode <- function(x) switch (x,
+                              "1" = "Jan",
+                              "2" = "Feb",
+                              "3" = "Mar",
+                              "4" = "Apr",
+                              "5" = "May",
+                              "6" = "Jun",
+                              "7" = "Jul",
+                              "8" = "Aug",
+                              "9" = "Sep",
+                              "10" = "Oct",
+                              "11" = "Nov",
+                              "12" = "Dec"
+                              
+)
+
+test.df[,1] <- unlist(lapply(test.df[,1], recode)) # recoding the list; replacing the months with numbers
+
+test.df$month<-factor(test.df$month,levels=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"))
+
+
+
+for (S in unique(New_results$species)){
+  test.dat <- New_results[New_results$species == S,]
+  
+  # the plot
+  assign(paste(S, "_box", sep=""),ggplot(test.dat, aes(x=site, y=phase_month)) +
+           geom_violin(fill = "goldenrod2", colour = "orangered1",trim=FALSE,scale="width",adjust=0.5,bw=0.1)+
+           labs(y="Phase (months; 0 = 1st Jan)") +
+           labs(x="Site") +
+           ggtitle(S)+
+           geom_text(stat = "count", aes(label = ..count.., y=(..count..-..count..)+3),vjust=0,size=3,colour="black", fontface="bold")+
+           theme_classic()+
+           theme(plot.title = element_text(size = 25,face = "italic"),
+                 axis.title.x = element_text(size = 18),
+                 axis.title.y = element_text(size = 18))+
+           theme(axis.text = element_text(colour = "black", size=14))
+  )
+  
+  ggsave(filename= paste(getwd(), "/Data/Flowers/Phase/", S, "_phase.jpg", sep=""),
+         width=10, height=6, units="in", dpi=300)
+  
+}
+
+###############################################################################################################################
+################################################### Hypothesis 2 ###############################################################
+################################################################################################################################
+
+###############################################################################################################################
+###################################### Moving window; Analyses of the slope ####################################################
+###############################################################################################################################
+
+tab <- read.csv("Data/Flowers/MovingWindow.csv")
+cond1 <- tab$site == "Mpala" 
+tab <- tab[!cond1,] # excludes Mpala from the analysis 
+tab$sp.site <- as.factor(paste0(tab$species, ".", tab$site))
+
+table<-data.frame(table(tab$species,tab$site))
+table1<-subset(table, Freq < 5 & Freq!=0) #remove species with less that 5 trees available 
+table1$sp.site <- as.factor(paste0(table1$Var1, ".", table1$Var2))
+
+tab<-subset(tab, !(sp.site %in% table1$sp.site)) #now only species that have more than 5 trees
+
+reg.fun <- function(x) {
+  y <- x
+  x <- 1:NROW(x)
+  coef(lm(y ~ x))[2]
+}
+
+table<-table(tab$species, tab$site) # see commun species
+morethan1site <- unname(apply(table,1,function(x) sum(length(x[x>0]))))
+NROW(table[morethan1site >1,])
+More_than_one_site<-table[morethan1site >1,]
+write.csv(More_than_one_site,"Data/Flowers/Table_common_species_MW.csv")  
+
+############################################################################################
+############## FREQUENCY ############################
+############################################################################################
+
+aggr.freq <- aggregate(tab$freq_max, by = list(species = tab$species, site = tab$site, ID = tab$ID), 
+                       FUN = reg.fun)
+
+aggr.freq$sp.site <- as.factor(paste0(aggr.freq$species, "-", aggr.freq$site))
+aggr.freq<-subset(aggr.freq, x!="NA") 
+
+freq.mod1 <- glm(x ~ sp.site - 1, data = aggr.freq)
+freq.mod2 <- glm(x ~ species + site - 1, data = aggr.freq)
+
+
+anova(freq.mod1, freq.mod2, test = "Chi") # testing the null that they fit equally well with the differences being due to random chance. 
+drop1(freq.mod2, test = "Chi")
+
+summary(freq.mod2)
+summary(freq.mod1)
+
+AIC(freq.mod1)
+AIC(freq.mod2)
+
+freq.mod3 <- update(freq.mod2, .~. - site)
+summary(freq.mod3)
+drop1(freq.mod3, test = "Chi")
+
+
+# slope direction graph for frequency; for the fidelity for a particular frequency, we used the same code 
+x11() # open a bigger window 
+
+significant_freq <- read.csv("Data/Flowers/H2 - frequency significant.csv")#Selected in Excel 
+significant_freq$sp.site <- as.factor(paste0(significant_freq$species, "-", significant_freq$site))
+
+aggr.freq1<-subset(aggr.freq, (sp.site %in% significant_freq$sp.site)) #now only species that are significant 
+aggr.freq1 <- aggr.freq1[order(aggr.freq1$sp.site),]
+
+No_sig<-subset(aggr.freq, !(sp.site %in% significant_freq$sp.site)) #now only species that are significant 
+No_sig <- No_sig[order(No_sig$sp.site),]
+
+# plot graph
+          x11()
+           aggr.freq1 <- aggr.freq1[order(aggr.freq1$sp.site),]
+           sp <- unique(aggr.freq1$sp.site)
+           ggplot(aggr.freq1[aggr.freq1$sp.site %in% sp[1:75],], aes(x=sp.site, y=x))+
+             geom_violin(trim=FALSE,scale="width",adjust=0.08,bw=0.08,fill="black")+
+             scale_y_continuous(limits = c(-0.4,0.05))+
+             geom_hline(yintercept=c(0),linetype="dotted")+
+             labs(y="Frequency slope") +
+             labs(x="Species and Sites") +
+             theme_classic()+
+             theme(plot.title = element_text(size = 25,face = "italic"),
+                   axis.title.x = element_text(size = 22),
+                   axis.title.y = element_text(size = 22))+
+             theme(axis.text = element_text(colour = "black", size=22, angle = 90))       
+             
+####################################################################################################################################
+####################################################################################################################################
+####################################################################################################################################
+
+aggr.pred <- aggregate(tab$spec_max_norm, by = list(species = tab$species, site = tab$site, ID = tab$ID), 
+                       FUN = reg.fun)
+aggr.pred$sp.site <- as.factor(paste0(aggr.pred$species, "-", aggr.pred$site))
+aggr.pred<-subset(aggr.pred, x!="NA") 
+
+
+pred.mod1 <- glm(x ~ sp.site - 1, data = aggr.pred)
+pred.mod2 <- glm(x ~ species + site - 1, data = aggr.pred)
+#pred.mod3 <- glm(x ~ species + site + species*site - 1, data = aggr.pred)
+anova(pred.mod1, pred.mod2, test = "Chi")  ### not significant, so species are behaving the same everywhere
+
+drop1(pred.mod2, test = "Chi")
+pred.mod4 <- update(pred.mod2, .~. - site)
+
+summary(pred.mod1)
+summary(pred.mod2)
+summary(pred.mod3)
+
+significant_pred <- read.csv("Data/Flowers/H2 - predictability significant.csv")#Selected in Excel 
+significant_pred$sp.site <- as.factor(paste0(significant_pred$species, "-", significant_pred$site))
+
+aggr.pred1<-subset(aggr.pred, (sp.site %in% significant_pred$sp.site)) #now only species that are significant 
+aggr.pred1 <- aggr.pred1[order(aggr.pred1$x),]
+
+
+significant_pred <- read.csv("Data/Fruit/H2 significant species predictability.csv") #Selected in Excel 
+significant_pred$sp.site <- as.factor(paste0(significant_pred$species, "-", significant_pred$site))
+
+
+
+aggr.pred1<-subset(aggr.pred, (sp.site %in% significant_pred$sp.site)) #now only species that are significant 
+aggr.pred1 <- aggr.pred1[order(aggr.pred1$sp.site),]
+
+aggr.pred1 <- aggr.pred1[order(aggr.pred1$x),] # negative to positive
+
+
+significant_pred <- significant_pred[order(significant_pred$estimate),] # sort by estimate value
+aggr.pred1$order <- factor(aggr.pred1$sp.site,
+                       levels = significant_pred$sp.site,ordered = TRUE) # method to reorder for ggplot...
+
+
+x11()
+ggplot(aggr.pred1, aes(x=order, y=x))+
+  geom_violin(trim=FALSE,scale="width",adjust=0.5,bw=0.4,fill="black")+
+  #scale_y_continuous(limits = c(-8,10))+
+  #geom_hline(yintercept=c(0),linetype="dotted")+
+  labs(y="Fidelity slope") +
+  labs(x="Species and Sites") +
+  theme_classic()+
+  theme(plot.title = element_text(size = 25,face = "italic"),
+        axis.title.x = element_text(size = 28),
+        axis.title.y = element_text(size = 28))+
+  theme(axis.text = element_text(colour = "black", size=22, angle = 90))    
+
+
+
