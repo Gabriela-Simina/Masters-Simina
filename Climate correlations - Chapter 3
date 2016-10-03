@@ -1,0 +1,800 @@
+setwd("R:/rsrch/cb751/lab/Simina")
+### ENSO from NOAA: http://www.esrl.noaa.gov/psd/enso/mei/table.html
+
+ENSO <- read.csv("Data/csv files/ENSO1.csv", row.names = 1)
+IOD <- read.csv("Data/csv files/IOD.csv")
+IOD <- IOD[IOD$year>1985,]
+NAO <- read.csv("Data/csv files/NAO.csv")
+NAO <- NAO[NAO$year>1985,]
+
+clim <- merge(NAO, IOD, by = c("year", "month"), all.x = TRUE)
+clim <- merge(clim, ENSO, by = c("year", "month"), all.x = TRUE)
+
+
+######################################################  Plots to test correlation between variables 
+######################################################
+plot(clim[,3:5])
+######################################################
+######################################################
+
+
+sites <- dir(paste0(getwd(), "/Data/Sites_Flower/"), pattern = ".csv") #find all csv files in flowers folder; These functions produce a character vector of the names of files or directories in the named directory.
+
+flowers_df <- data.frame( "Species" = NA, "month" = NA,  "year" = NA,
+                          "flowering" = NA,  "total" = NA,  "site"= NA)
+flowers_df <- flowers_df[-1,]
+
+for(ss in 1:length(sites)){
+
+  my_file=read.csv(paste0(getwd(), "/Data/Sites_Flower/", sites[[ss]]))
+
+
+  flowering <- aggregate(my_file$value>0, 
+                             by = list(Species = my_file$Species, month= my_file$month, year=my_file$year), 
+                             FUN = sum, na.rm = TRUE)
+  names(flowering)[4] <- "flowering"
+                   
+  total <- aggregate(my_file$value, 
+                                      by = list(Species = my_file$Species, month= my_file$month, year=my_file$year), 
+                                      FUN = function(x) sum(!is.na(x)))
+  names(total)[4] <- "total"
+  
+  comb.agg <- merge(flowering, total)
+  comb.agg$site <- as.character(unlist(strsplit(sites[ss], "_Flowers.csv")))
+  flowers_df <- rbind(flowers_df, comb.agg)
+}
+
+flowers_df <- flowers_df[flowers_df$total>0,]  ### removes any total counts where there are no individuals with non-NA flowering counts in that month.
+
+flowers_df$site <- as.factor(flowers_df$site)
+flowers_df$month <- as.factor(flowers_df$month)
+flowers_df$sp.site <- as.factor(paste0(flowers_df$Species, ".", flowers_df$site))
+
+flowers_df<-merge(flowers_df,clim, all.x=TRUE)
+
+#flowers_df$flower_proportion<-flowers_df$flowering/flowers_df$total
+#write.csv(flowers_df, "Climate_species.csv")
+
+## correlation between flowerinf events and climatic phenomena 
+
+library(Hmisc)
+cor(flowers_df$NAO, flowers_df$flower_proportion)
+
+###########################################  GLM model  #######################################################################
+
+flower.data <- merge(flowers_df, clim, all.x = TRUE)
+flower_models <- vector(nlevels(flower.data$Species), mode = "list")
+
+for(sp in 1:nlevels(flower.data$Species)){
+
+  sp.data <- flower.data[flower.data$Species==levels(flower.data$Species)[sp],]
+  print(unique(sp.data$Species))
+  if(NROW(sp.data)>12*5) {   ## if more than 5 year / site combinations are availalbe for analysis...
+    drp <- data.frame(x = rep(1,3))
+    names(drp) <- "Pr(>Chi)"
+    if(sum(table(sp.data$site)>0)>1){ #sp with more than 2 sites
+      mod1 <- glm(formula = cbind(flowering,total-flowering) ~ site * (NAO + DMI + ENSO + month),
+                family = binomial(link="logit"),  data = sp.data) ## takes species present in many sites
+    } else {
+      mod1 <- glm(formula = cbind(flowering,total-flowering) ~ NAO + DMI + ENSO + month,
+                family = binomial(link="logit"),  data = sp.data) # take species present in one site only
+    }
+    while(any(drp$`Pr(>Chi)`>0.05, na.rm = TRUE) & NROW(drp) > 2){
+      drp <- drop1(mod1, test = "Chi")
+      drp1 <- rownames(drp)[which.max(drp[-grep("month", rownames(drp)),"Pr(>Chi)"])]
+      if(NROW(drp1)>0)  mod1 <- update(mod1,  formula(paste(". ~ . -", drp1)))
+#      print(formula(mod1))
+    } # end while
+    flower_models[[sp]] <- mod1    
+   }# end if
+
+} # end sp loop
+names<-levels(flower.data$Species)
+no<-seq(from=1,to=666,by=1)
+dat<-data.frame(names,no)
+class(dat)
+View(dat)
+
+
+################################################ print the GLM output 
+
+for (i in 1:length(flower_models)){
+  if (length(flower_models[[i]]$coef)==0){
+    print (paste0("Model is NULL"))
+    print(dat[i,1])
+  } else{ 
+    s<-summary(flower_models[[i]])$coef
+    sp.n<-dat[i,1]
+    write.csv(s,paste0("R:/rsrch/cb751/lab/Simina/catch/",sp.n,".csv"))
+  }}
+
+###################################################### Filling the big climate table with the model output 
+#create an empty data frame to fill; that is table3
+
+big.table<-read.csv("table3.csv")
+
+setwd("R:/rsrch/cb751/lab/Simina/catch_flowers/")
+
+sp.in.dir <- str_split(list.files("R:/rsrch/cb751/lab/Simina/catch_flowers/"), pattern = ".csv")
+for (j in 1:length(sp.in.dir)){
+  sp.in.dir[[j]] <- sp.in.dir[[j]][[1]]
+}
+sp.in.dir <- as.character(sp.in.dir)
+
+#for (i in list.files())
+for (sp in unique(big.table$species)){
+  if (sp %in% sp.in.dir == TRUE){
+    small.tab<-read.csv(paste0("R:/rsrch/cb751/lab/Simina/catch_flowers/", sp, ".csv"))
+    pattern<-"DMI|NAO|ENSO|:DMI|:NAO|:ENSO"
+    d<-small.tab[grep(pattern, small.tab$X), ]
+    if (any(colnames(big.table) %in% unique(d$X))) {
+      clims <- colnames(big.table)[colnames(big.table) %in% unique(d$X)]
+      big.table[big.table$species == sp, clims] <-  rep(d[d$X %in% clims, 2], each = sum(big.table$species == sp))
+      interacts <- grep(":", d[,1])
+      if (sum(interacts)>0){
+        inters <- unlist(strsplit(as.character(d$X[interacts]), ":"))
+        inters <- unique(inters[inters %in% clims])
+        for (c in inters) {
+          rows.in.d <- grep(paste0(":", c), d$X)
+          big.table[big.table$species == sp, c][-1] <- big.table[big.table$species == sp, c][-1] + d$Estimate[rows.in.d]
+        } # end of loop across all interacting variables
+      } ## end of if any interaction terms
+      
+    } ## end if any climate variables
+  }
+}  ## end species loop
+
+write.csv(big.table,"Climate_flowers.csv")
+
+########################################### Climate combinations ######################################################
+#########################################
+############ Flowering ##################
+#########################################
+
+setwd("R:/rsrch/cb751/lab/Simina")
+
+C_flowers<-read.csv("Climate_flowers.csv") 
+
+# total of 629 species 
+# create a matrix to fill it with the combinations 
+
+mat<-matrix(NA, nrow = 17, ncol = 11)
+mat[,1]<-paste0(unique(C_flowers$site))
+
+for(i in unique(C_flowers$site)){
+  dat<-C_flowers[C_flowers$site==i,]
+  mat[mat[,1]==i,2]<-sum(!is.na(dat$ENSO))
+  mat[mat[,1]==i,3]<-sum(!is.na(dat$DMI))
+  mat[mat[,1]==i,4]<-sum(!is.na(dat$NAO))
+  mat[mat[,1]==i,5]<-NROW(dat[!is.na(dat$ENSO)&is.na(dat$NAO)&is.na(dat$DMI),]) 
+  mat[mat[,1]==i,6]<-NROW(dat[!is.na(dat$DMI)&is.na(dat$NAO)&is.na(dat$ENSO),])
+  mat[mat[,1]==i,7]<-NROW(dat[!is.na(dat$NAO)&is.na(dat$ENSO)&is.na(dat$DMI),]) 
+  mat[mat[,1]==i,8]<-NROW(dat[!is.na(dat$ENSO)& !is.na(dat$NAO),]) #affected by ENSO and NAO
+  mat[mat[,1]==i,9]<-NROW(dat[!is.na(dat$ENSO)& !is.na(dat$DMI),])#affected by ENSO and IOD
+  mat[mat[,1]==i,10]<-NROW(dat[!is.na(dat$DMI)& !is.na(dat$NAO),])#affected by NAO and IOD
+  mat[mat[,1]==i,11]<-NROW(dat[!is.na(dat$DMI)& !is.na(dat$NAO)&!is.na(dat$ENSO),])#affected by NAO and IOD and ENSO
+}
+#View(mat)
+
+
+dat1<-as.data.frame(mat)
+names(dat1) <- names(dat1)<-c("site","ENSO_T","DMI_T","NAO_T","ENSO","DMI","NAO","ENSO+NAO","ENSO+DMI","DMI+NAO","ENSO+DMI+NAO")
+#names(dat2) <- names(dat1)<-c("site","ENSO_T","DMI_T","NAO_T","ENSO","DMI","NAO","ENSO+NAO","ENSO+DMI","DMI+NAO","ENSO+DMI+NAO")
+#write.csv(dat1,"Pie chart.csv")
+
+# change columns to numeric
+#dat1[,2:11] <- as.numeric(as.factor(dat1[,2:11]))
+indx <- sapply(dat1, is.factor)
+dat1[indx] <- lapply(dat1[indx], function(x) as.numeric(as.character(x)))
+dat1[,1] <- mat[1:17,1]
+dat1$total <- rowSums(dat1[,5:11])
+dat2 <- dat1
+dat2[,5:11] <- dat1[,5:11]/dat1[,12]
+names(dat2) <- names(dat1)<-c("site","E(T)","I(T)","N(T)","E","I",
+                              "N","E+N","E+I","I+N","E+I+N", "total")
+
+
+
+library(reshape2)
+d3 <- melt(dat2[,c(1,5:11)],id.var=1)
+d3$value <- as.numeric(d3$value) # change to numeric, only for dat1
+library(ggplot2)
+# test <-d3[d3$site=="Amani",]
+# test$value <- as.numeric(test$value)
+#test <- test[c(1,4,2,5,3,6,7:10),]
+d3$variable2 <- factor(d3$variable, levels = sort(as.character(d3$variable)))
+
+#desired_order <- c("E+I+N", "E+N", "E", "E+I", "I", "I+N", "N")
+#write.csv(d3,"climate_last.csv")
+
+d3$site<-as.factor(d3$site)
+d3$site<-factor(d3$site,levels=c("Tai","Mbaiki","Okapi-Edoro","Budongo","Lope","Mbeli","Kibale","Kakamega","Loango","Goualougo ","Nyungwe","Bwindi","Mondika","Okapi-Lenda","Gombe","Amani","Mpala"))
+d3$variable2<-factor(d3$variable2,levels=c("E+I+N", "E+N", "E", "E+I", "I", "I+N", "N"))
+
+X11()
+## No flowering for Loango - wrong index used 
+cbPalette <- c("gray0","forestgreen", "yellow2", "darkorange", "firebrick1", "darkorchid4",
+               "dodgerblue")
+ggplot(d3[d3$site!="Mpala" & d3$site!="Loango",], aes(x = variable2, y = value)) +
+  geom_bar(width = 1,stat="identity", aes(fill=variable2)) +
+  facet_wrap(~ site, ncol=4)+
+  coord_polar()+
+  scale_fill_manual(name = "Climate Flowering", values=cbPalette)+
+  theme(axis.title = element_blank())
+
+
+################# expected vs observed values ######################
+
+
+Fish<-dat1[c(1,3:17),c(1,5:12)]
+Fish$TI<- rowSums(Fish[,c(3,6,7,8)])
+Fish$TN<- rowSums(Fish[,c(4,5,7,8)])
+Fish$TE<- rowSums(Fish[,c(2,5,6,8)])
+Fish$R<- rowSums(Fish[,c(10:12)])
+Fish$predIN<-(Fish$TI/Fish$R)*(Fish$TN/Fish$R)*(1-(Fish$TE/Fish$R))
+Fish$predIE<-(Fish$TI/Fish$R)*(Fish$TE/Fish$R)*(1-(Fish$TN/Fish$R))
+Fish$predNE<-(Fish$TN/Fish$R)*(Fish$TE/Fish$R)*(1-(Fish$TI/Fish$R))
+Fish$predI<-(Fish$TI/Fish$R)*(1-(Fish$TE/Fish$R))*(1-(Fish$TN/Fish$R))
+Fish$predE<-(Fish$TE/Fish$R)*(1-(Fish$TI/Fish$R))*(1-(Fish$TN/Fish$R))
+Fish$predN<-(Fish$TN/Fish$R)*(1-(Fish$TI/Fish$R))*(1-(Fish$TE/Fish$R))
+Fish$predENT<-(Fish$TN/Fish$R)*(Fish$TI/Fish$R)*(Fish$TE/Fish$R)
+Fish$pred.<-(1-(Fish$TN/Fish$R))*(1-(Fish$TI/Fish$R))*(1-(Fish$TE/Fish$R)) #the ones expected to be 0 by default 
+Fish$predIN <- Fish$total * Fish$predIN / (1-Fish$pred.)
+Fish$predIE <- Fish$total * Fish$predIE / (1-Fish$pred.)
+Fish$predNE <- Fish$total * Fish$predNE / (1-Fish$pred.)
+Fish$predI <- Fish$total * Fish$predI / (1-Fish$pred.)
+Fish$predE <- Fish$total * Fish$predE / (1-Fish$pred.)
+Fish$predN <- Fish$total * Fish$predN / (1-Fish$pred.)
+Fish$predENT <- Fish$total * Fish$predENT / (1-Fish$pred.)
+Fish$predTot <- rowSums(Fish[,14:20])
+
+
+install.packages("XNomial")
+library(XNomial)
+
+#Compute the probability that the test statistic is "at least as extreme" as observed
+# be selected from among three choices: "LLR" for Log Likelihood Ratio, "Prob" for the probability itself or "Chisq"
+
+#obs.data<- c(9, 47)  # x1 species affected by ENSO, x2 species not affected by ENSO
+#exp.data <- c(4.71, 51.29) # y1 expected no. of species affected by ENSO, y2 expected no. of species not affected by ENSO
+
+#xmulti(obs.data, exp.data, detail=3) #this test will test the hypothesis that obs.data matches the exp. data 
+
+# It will give you 3 p-values which are three goodness of fit tests. 
+# If all of the three are not significant, that implies your data follows the expected distribution. 
+#If  P<0.05, that implies your data does not fit the expected distribution and hence the result you get IS NOT BY CHANCE.
+
+#obs.data<- c(11, 54)  
+#exp.data <- c(2, 63) 
+
+#xmulti(obs.data, exp.data, detail=3)
+
+
+#Compute the probability that the test statistic is "at least as extreme" as observed
+# be selected from among three choices: "LLR" for Log Likelihood Ratio, "Prob" for the probability itself or "Chisq"
+
+#Budongo 9 total 
+obs.data <- Fish[1,c(2:8)]
+exp.data <- Fish[1,c(14:20)]
+xmulti(obs.data, exp.data, detail=3) # NOT by chance <0.001
+
+#For one site 
+obs.data <- as.numeric(Matrix[2,c(2:8)])
+exp.data <- as.numeric(Matrix[2,c(14:20)])
+test<-xmulti(obs.data, exp.data, detail=3)
+
+names<-unique(Fish$site)
+Matrix<-data.matrix(Fish, rownames.force = NA)
+Matrix[,1]<-names
+
+test.df <- matrix(NA, nrow = 16, ncol = 2)
+test.df[,1]<-names
+names(test.df)[1]<-"site"
+names(test.df)[2]<-"pLLR"
+
+# For all sites  
+
+for (ss in 2:length(Fish$site)){
+  obs.data <- as.numeric(Matrix[ss,c(2:8)])
+  exp.data <- as.numeric(Matrix[ss,c(14:20)])
+  test<-xmulti(obs.data, exp.data, detail=3)
+  xmulti(obs.data, exp.data,  histobins=T)
+  test.df[ss,2] <-round(xmulti(obs.data, exp.data, detail=3)$"pLLR",digits=3)
+}
+
+test.df<-data.frame(test.df)
+write.csv(test.df,"By chance_flower.csv")
+
+### Correlations between CLIMATE PHENOMENA AND PRECIPITATION 
+
+Correlatons_climate <- read.csv("Data/New_correlations_climate.csv", as.is = T)
+
+mat.spearman <- mat.pearson <-matrix(, nrow = 16, ncol = 6,dimnames = list(c("Lope","Amani","Budongo","Bwindi","Gombe","Kibale","Loango","Nyungwe","Mbaiki","Mahale","Kakamega","Goualougo","Mbeli","Mondika","Okapi","Tai"),
+                                                   c("ENSO","ENSO.P","NAO", "NAO.P","IOD","IOD.P")))
+
+col.seq <- seq(2,NCOL(Correlatons_climate),4)
+
+for(i in col.seq){
+#i <- col.seq[1]
+precip <- Correlatons_climate[,i]
+
+NAO<-Correlatons_climate[,i+2]
+IOD<-Correlatons_climate[,i+1]
+ENSO<-Correlatons_climate[,i+3]
+
+NAO.P<-Correlatons_climate[,i+2]
+IOD.P<-Correlatons_climate[,i+1]
+ENSO.P<-Correlatons_climate[,i+3]
+
+plot(ENSO,precip)
+plot(precip,ENSO)
+plot(precip,IOD)
+
+mat.pearson[which(col.seq==i),3] <- cor.test(NAO,precip,method = "pearson")$estimate
+mat.pearson[which(col.seq==i),5] <- cor.test(IOD,precip,method = "pearson")$estimate
+mat.pearson[which(col.seq==i),1] <- cor.test(ENSO,precip,method = "pearson")$estimate
+
+mat.pearson[which(col.seq==i),4] <- round(cor.test(NAO.P,precip,method = "pearson")$p.value,digits=2)
+mat.pearson[which(col.seq==i),6] <- round(cor.test(IOD.P,precip,method = "pearson")$p.value,digits=2)
+mat.pearson[which(col.seq==i),2] <- round(cor.test(ENSO.P,precip,method = "pearson")$p.value,digits=2)
+
+mat.spearman[which(col.seq==i),3] <- cor.test(NAO,precip,method = "spearman")$estimate
+mat.spearman[which(col.seq==i),5] <- cor.test(IOD,precip,method = "spearman")$estimate
+mat.spearman[which(col.seq==i),1] <- cor.test(ENSO,precip,method = "spearman")$estimate
+
+mat.spearman[which(col.seq==i),4] <- round(cor.test(NAO.P,precip,method = "spearman")$p.value,digits=2)
+mat.spearman[which(col.seq==i),6] <- round(cor.test(IOD.P,precip,method = "spearman")$p.value,digits=2)
+mat.spearman[which(col.seq==i),2] <- round(cor.test(ENSO.P,precip,method = "spearman")$p.value,digits=2)
+
+}
+
+i<-18
+plot(mat.pearson[,1], mat.spearman[,1])
+plot()
+
+# export the tables 
+mat.pearson<-data.frame(mat.pearson)
+mat.spearman<-data.frame(mat.spearman)
+write.csv(mat.pearson,"Pearson correlations_climate.csv")
+write.csv(mat.spearman,"Spearman correlations_climate.csv")
+
+
+####################################################################################################
+###################################################################################################
+####################################################################################################
+                  ############# PLOT precipitation per month ################
+############################### ---------- FLOWERs ---------------- ##################################
+########################################################################################################
+#######################################################################################################
+##################################################################################################
+### Fourier
+
+#create a new dataframe that will act as a universal month x year identifier
+
+timeline1 <- data.frame(year=rep(1900:2015,each=12),
+                        month=rep(c(1,2,3,4,5,6,7,8,9,10,11,12), NROW(1900:2015)))
+timeline1$jmonth <- 1:NROW(timeline1)
+timeline1$date <- strptime(paste("01", timeline1$month, timeline1$year, sep = "-"), format = "%d-%m-%Y")
+
+
+#prepare the time series function for the analyses 
+ts_fun <- function(d_l){
+  ts(data = d_l[[1]], start = c(timeline1$year[timeline1$jmonth == min(d_l[[2]])],
+                                + timeline1$month[timeline1$jmonth == min(d_l[[2]])]), freq = 12)
+}
+
+
+# Specify and upload the files you want to insert in your loop 
+
+sites <- dir(paste0(getwd(), "/Data/Sites_Flower/"), pattern = ".csv") #find all csv files in flowers folder; These functions produce a character vector of the names of files or directories in the named directory.
+
+# Create a list that will contain all sites 
+
+big_list=list()
+
+for(ss in 1:length(sites)){
+  
+  data_ls <- list() #create a list to fill in later with all the species for one site 
+  
+  my_file=read.csv(paste0(getwd(), "/Data/Sites_Flower/", sites[[ss]]))
+  
+  for(sp in levels(my_file$Species)){
+    dat.sp <- my_file[my_file$Species == sp,] # Distinguish between all Species within all sites
+    dat.sp <- dat.sp[order(dat.sp$Tree.ID, dat.sp$jmonth),]
+    
+    tree_ls <- list()
+    
+    for (i in unique(dat.sp$Tree.ID)){
+      mon1 <-  dat.sp$jmonth[dat.sp$Tree.ID == i]  ### using numeric indexing we extract jmonth; for every Tree iD; raw data  
+      mon <- min(mon1, na.rm=T):max(mon1, na.rm=T) #min till max: completes the numbers with the missing jmonth 
+      dat <- rep(NA, NROW(mon)) # repllicates NA in the length of mon (95)
+      dat1 <- dat.sp$value[dat.sp$Tree.ID == i]   # Finds flowering score for every tree ID
+      used.mons <- mon %in% mon1 #what is in mon1 and not in mon 
+      
+      
+      if(sum(used.mons) != NROW(dat1)){ #if used.mons is not equal to dat1; length wise 
+        dups <- duplicated(mon1) # no duplicates in  mon1, the initial jmonth in our data
+        mon1 <- mon1[!dups]# ! logical operator (negative). 
+        dat1 <- dat1[!dups]
+        used.mons <- mon %in% mon1
+      }
+      
+      dat[used.mons] <- dat1 
+      dat.nas <- (is.na(dat)) * unlist(lapply(rle(is.na(dat))$lengths, seq_len))  ## finds conequtive NAs in the value column 
+      #print(sum(!is.na(dat)))
+      
+      if(sum(!is.na(dat))>2) {
+        dat[is.na(dat)] <- approx(x= mon[!is.na(dat)], y = dat[!is.na(dat)], xout = mon[is.na(dat)] )$y  ##interpolates all NAs - linear
+        
+        
+        ## If gaps are too long, cut dataset
+        if(any(dat.nas>3)){ # if gaps are longer than 3 months then cut 
+          data_list <- list()
+          cuts <- which(dat.nas>3) # cuts where there is more than 3 NAs in consecutive 3 months 
+          cuts <- c(cuts, NROW(dat.nas) + 1)  ## need to add to the cuts the last value in the vector - but plus one because the code below assumes that the cut vector identifies the first na, not the last non-na and the last value is required.
+          bot <- 1
+          for (j in 1:NROW(cuts)){
+            dat_l <- dat[bot:(cuts[j] - 1)]   ### cuts original data using the positions of the first value that is not na and last one before a cut(cuts identify the FIRST na values, not the last non na)
+            mon_l <- mon[bot:(cuts[j] - 1 )]
+            dat_l <- dat_l[!is.na(dat_l)]   ### removes residual nas left at start of sequence if only 3 - approx does not extrapolate.
+            mon_l <- mon_l[!is.na(dat_l)]
+            if(NROW(dat_l) > 3){
+              data_list[[j]] <- list(dat_l, mon_l)
+            }
+            bot <- cuts[j] + 1
+            
+          }
+          
+          data_list <- data_list[unlist(lapply(data_list, NROW))>0]
+          tree.ts <- lapply(data_list, ts_fun) #apply the ts_function on data_list 
+          tree_ls <- c(tree_ls, tree.ts)
+          
+        } else { 
+          mon <- mon[!is.na(dat)] # mon takes all the values that are not NAs 
+          dat <- dat[!is.na(dat)] # dat takes all the values that are not NAs 
+          data_list <- list(dat, mon) # creates a list where 
+          
+          
+          tree.ts <- ts_fun(data_list)
+          tree_ls <- c(tree_ls, list(tree.ts))
+        }
+      }
+    }
+    #tree_ls <- tree_ls[lapply(tree_ls, NROW)>60]  ### Strips any fragments of time series less than 60 months long (5 years) 
+    tree_ls <- tree_ls[lapply(tree_ls, sum)>0]  ### Strips any trees that never flower
+    # combine each species
+    data_ls[[sp]]<-tree_ls
+  }
+  #data_ls <- data_ls[lapply(data_ls, NROW)>9]### strips any species with fewer than 10 individuals that flowered
+  big_list[[ss]]=data_ls
+}
+
+names(big_list) <- unlist(lapply(strsplit(sites, "_"), function(x) x[1]))
+
+
+# setwd("R:/rsrch/cb751/lab/Simina/test/")
+# files = list.files(pattern="*.csv")
+# myfiles = do.call(rbind, lapply(files, function(x) read.csv(x, stringsAsFactors = FALSE)))
+
+###### Prepare the precipitation data 
+
+setwd("R:/rsrch/cb751/lab/Simina")
+
+Africa_precip <- read.csv("UoY analyses/Climate data/Africa.precip.chrips.csv", as.is = T)
+Africa_precip <- Africa_precip[Africa_precip$year>1985,]
+
+
+clim_mat <-matrix(, nrow = 12, ncol = 18,dimnames = list(c("1","2","3","4","5","6","7","8","9","10","11","12"),
+                                                         c("month","Tai","Bwindi","Nyungwe","Mahale","Gombe","Budongo","Kibale","Okapi","Lope","Mbeli","Goualago","Mbaiki","Mpala","Amani","Loango","Mondika","Kakamega")))
+
+clim_mat[,1]<-1:12
+#clim_mat[clim_mat[,1]==1,k]<-m
+
+
+k<-1
+for(i in 3:19){
+  site<-Africa_precip[,c(1:2,i)]
+  print(names(site[3]))  
+  k<-k+1
+  for(j in 1:12){
+    month<-site[site$month==j,]
+    m<-mean(month[,3])
+    clim_mat[clim_mat[,1]==j,k]<-m
+  }
+}
+
+View(clim_mat)
+
+clim.mat<-as.data.frame(clim_mat)
+#View(clim.mat)
+
+################################################ ALL sites ############################################
+
+precip_mat <-matrix(, nrow = 12, ncol = 18,dimnames = list(c("1","2","3","4","5","6","7","8","9","10","11","12"),
+                                                         c("month","Tai","Bwindi","Nyungwe","Mahale","Gombe","Budongo","Kibale","Okapi","Lope","Mbeli","Goualago","Mbaiki","Mpala","Amani","Loango","Mondika","Kakamega")))
+precip_mat[,1]<-1:12
+View(precip_mat)
+
+for(i in 2:18){
+  clim.t<-clim.mat[,c(1,i)]      # lim.t<-clim.mat[,c(1,2)]
+  d<-clim.t[,2]/max(clim.t[,2])  # d<-clim.t[,2]/max(clim.t[,2])
+  precip_mat[,i]<-d              # precip_mat[,2]<-d
+}
+
+precip_mat<-as.data.frame(precip_mat)
+precip_mat$mo<-c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+precip_mat$mo<-as.factor(precip_mat$mo)
+precip_mat$mo<-factor(precip_mat$mo,levels=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"))
+
+########
+#### run this, after you run Fourier 
+
+test.df = data.frame(month = NULL, year = NULL, mean = NULL, site = NULL)
+
+for (ss in 1:length(sites)){
+  my_file=read.csv(paste0(getwd(), "/Data/Sites_Flower/", sites[[ss]]))
+  test <- aggregate(my_file$value>0, by = list(my_file$month, my_file$year), mean, na.rm = TRUE)
+  test$site <- sites[[ss]]
+  test.df <- rbind(test.df, test[, c("Group.1", "Group.2", "x", "site")])
+  test$site[ss]<-paste0(sites[[ss]])
+}
+
+
+names(test.df)[1]<-"month"
+names(test.df)[2]<-"year"
+names(test.df)[3]<-"mean"
+names(test.df)[4]<-"site"
+
+recode <- function(x) switch (x,
+                              "1" = "Jan",
+                              "2" = "Feb",
+                              "3" = "Mar",
+                              "4" = "Apr",
+                              "5" = "May",
+                              "6" = "Jun",
+                              "7" = "Jul",
+                              "8" = "Aug",
+                              "9" = "Sep",
+                              "10" = "Oct",
+                              "11" = "Nov",
+                              "12" = "Dec"
+                              
+)
+
+test.df[,1] <- unlist(lapply(test.df[,1], recode)) # recoding the list; replacing the months with numbers
+
+test.df$month<-factor(test.df$month,levels=c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"))
+
+
+####### PLOT ######
+rain.lope<-clim.mat$Lope
+r.lo<-(((0.4-0)*(rain.lope-min(rain.lope)))/(max(rain.lope)-min(rain.lope)))+0
+
+LOPE<-ggplot(test.df[test.df$site=="Lope_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.lo),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.lo),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12)+
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Lope"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.4))
+
+
+rain.ama<-clim.mat$Amani
+r.a<-(((0.1-0)*(rain.ama-min(rain.ama)))/(max(rain.ama)-min(rain.ama)))+0
+
+AMANI<-ggplot(test.df[test.df$site=="Amani_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.a),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.a),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Amani"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.1))
+
+## no flower data for Loango
+
+rain.t<-clim.mat$Tai
+r.t<-(((0.3-0)*(rain.t-min(rain.t)))/(max(rain.t)-min(rain.t)))+0
+
+TAI<-ggplot(test.df[test.df$site=="Tai_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  #geom_point(data = precip_mat, aes(x=factor(mo),y=Tai),col="red",size = 1) +
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.t),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.t),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Tai"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.3))
+
+rain.bw<-clim.mat$Bwindi
+r.b<-(((0.5-0)*(rain.bw-min(rain.bw)))/(max(rain.bw)-min(rain.bw)))+0
+
+BWINDI<-ggplot(test.df[test.df$site=="Bwindi_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.b),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.b),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Bwindi"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")
+
+rain.ny<-clim.mat$Nyungwe
+r.ny<-(((0.3-0)*(rain.ny-min(rain.ny)))/(max(rain.ny)-min(rain.ny)))+0
+
+NYUNGWE<-ggplot(test.df[test.df$site=="Nyungwe_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.ny),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.ny),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Nyungwe"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")
+
+rain.ma<-clim.mat$Mahale
+r.mah<-(((0.4-0)*(rain.ma-min(rain.ma)))/(max(rain.ma)-min(rain.ma)))+0
+
+MAHALE<-ggplot(test.df[test.df$site=="Mahale_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.mah),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.mah),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Mahale"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")
+
+rain.gom<-clim.mat$Gombe
+r.gomb<-(((0.4-0)*(rain.gom-min(rain.gom)))/(max(rain.gom)-min(rain.gom)))+0
+
+GOMBE<-ggplot(test.df[test.df$site=="Gombe_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.gomb),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.gomb),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Gombe"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.4))
+
+rain.bud<-clim.mat$Budongo
+r.bud<-(((0.05-0)*(rain.bud-min(rain.bud)))/(max(rain.bud)-min(rain.bud)))+0
+
+BUDONGO<-ggplot(test.df[test.df$site=="Budongo_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.colour=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.bud),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.bud),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Budongo"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.06))
+
+rain.kibale<-clim.mat$Kibale
+r.kib<-(((0.25-0)*(rain.kibale-min(rain.kibale)))/(max(rain.kibale)-min(rain.kibale)))+0
+
+KIBALE<-ggplot(test.df[test.df$site=="Kibale_Kanyawara_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.kib),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.kib),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Kibale"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")
+
+rain.okapiE<-clim.mat$Okapi
+r.oke<-(((0.2-0)*(rain.okapiE-min(rain.okapiE)))/(max(rain.okapiE)-min(rain.okapiE)))+0
+
+OKAPI.Edoro<-ggplot(test.df[test.df$site=="Okapi Edoro_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.oke),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.oke),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Okapi Edoro"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.2))
+
+rain.okapiL<-clim.mat$Okapi
+r.okl<-(((0.2-0)*(rain.okapiL-min(rain.okapiL)))/(max(rain.okapiL)-min(rain.okapiL)))+0
+
+OKAPI.Lenda<-ggplot(test.df[test.df$site=="Okapi Lenda_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.okl),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.okl),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Okapi Lenda"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.2))
+
+rain.mbeli<-clim.mat$Mbeli
+r.mb<-(((0.2-0)*(rain.mbeli-min(rain.mbeli)))/(max(rain.mbeli)-min(rain.mbeli)))+0
+
+MBELI<-ggplot(test.df[test.df$site=="Mbeli_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.mb),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.mb),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Mbeli"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.2))
+
+rain.gou<-clim.mat$Goualago
+r.go<-(((0.25-0)*(rain.gou-min(rain.gou)))/(max(rain.gou)-min(rain.gou)))+0
+
+GOUALOUGO<-ggplot(test.df[test.df$site=="Goualougo_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.go),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.go),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Goualougo"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.3))
+
+rain.mab<-clim.mat$Mbaiki
+r.ma<-(((0.1-0)*(rain.mab-min(rain.mab)))/(max(rain.mab)-min(rain.mab)))+0
+
+MBAIKI<-ggplot(test.df[test.df$site=="Mbaiki_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.ma),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.ma),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Mbaiki"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.1))
+
+rain.mondik<-clim.mat$Mondika
+r.mon<-(((0.3-0)*(rain.mondik-min(rain.mondik)))/(max(rain.mondik)-min(rain.mondik)))+0
+
+MONDIKA<-ggplot(test.df[test.df$site=="Mondika_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.mon),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.mon),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Mondika"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")+
+  ylim(c(0,0.3))
+
+rain.kak<-clim.mat$Kakamega
+r.ka<-(((0.2-0)*(rain.kak-min(rain.kak)))/(max(rain.kak)-min(rain.kak)))+0
+
+KAKAMEGA<-ggplot(test.df[test.df$site=="Kakamega_Flowers.csv",],aes(x=factor(month),y=mean))+
+  geom_boxplot(fill="coral",col="black",outlier.size=NA)+
+  geom_point(data = precip_mat, aes(x=factor(mo),y=r.ka),col="blue",size = 1) +
+  geom_polygon(data = precip_mat, aes(x=c(1:12),y=r.ka),col="blue",size = .5, fill=NA) +
+  coord_polar(start = - pi * 1/12) +
+  theme_minimal(base_size=10)+
+  ggtitle(paste0("Kakamega"))+
+  theme(legend.position="none",axis.title.x=element_blank(),axis.ticks=element_blank())+
+  ylab("")
+  #ylim(c(0,0.2))
+ 
+
+x11()
+test1100 <- grid.arrange(TAI, MBAIKI, OKAPI.Edoro, BUDONGO,  LOPE, MBELI, OKAPI.Lenda,KIBALE, KAKAMEGA, GOUALOUGO, NYUNGWE, BWINDI, MONDIKA, GOMBE, AMANI, ncol=4, respect=TRUE)
+#ggsave(test, file="NEW.jpg", width=8, height=8, units="in", dpi=500)
+ggsave(test100, file="NEW100.jpg", width=8, height=8, units="in", dpi=500)
+getwd()
+
