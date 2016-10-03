@@ -1,0 +1,285 @@
+#### FLOWERING 
+
+#### convertin raw data to time series for fourier analysis
+
+setwd("R:/rsrch/cb751/lab/Simina")
+#######################################################################################################################
+#######################################################################################################################
+
+#Read the files # this is to simulate only one site; in this case: Bwindi 
+
+#At the moment we will only use flower.B as, we are interested in flowers only 
+#flower.B <- read.csv("Data/Bwindi/Bwindi_Flowers.csv") # there are 2 NAs in jmonth...that were deleted in the excel file, no need for them anyway 
+#fruit.B <- read.csv("Data/Bwindi/Bwindi ripe fruit.csv") # there was 1 Na found in the jmonth that was removed straight from the excel file as we do not need it anymore
+#flower.B <- flower.B[!is.na(flower.B$jmonth),] # if you want to remove them in R
+
+#Upload the libraries you need for the results table and plots 
+library(plyr)
+library(RColorBrewer)
+library(ggplot2)
+library(reshape)
+library(grid)
+library(circular)
+
+########################### Prepare time series for analysis #################################################################
+
+#######################################################################################################################
+################################################# FLOWERING ##############################################################
+#######################################################################################################################
+
+#create a new dataframe that will act as a universal month x year identifier
+
+timeline1 <- data.frame(year=rep(1900:2014,each=12),
+                        month=rep(c(1,2,3,4,5,6,7,8,9,10,11,12), NROW(1900:2014)))
+timeline1$jmonth <- 1:NROW(timeline1)
+timeline1$date <- strptime(paste("01", timeline1$month, timeline1$year, sep = "-"), format = "%d-%m-%Y")
+
+
+#prepare the time series function for the analyses 
+ts_fun <- function(d_l){
+  ts(data = d_l[[1]], start = c(timeline1$year[timeline1$jmonth == min(d_l[[2]])],
+                                + timeline1$month[timeline1$jmonth == min(d_l[[2]])]), freq = 12)
+}
+
+
+# Specify and upload the files you want to insert in your loop 
+
+sites <- dir(paste0(getwd(), "/Data/Flowers/Sites"), pattern = ".csv") #find all csv files in flowers folder
+
+# Create a list that will contain all sites 
+
+## moving window loop:
+
+all.big_lists <- list()
+
+for(mw in 1986:2011){
+  
+  big_list.mw=list()  ## rename big_list throughout
+  
+  for(ss in 1:length(sites)){
+    
+    data_ls <- list() #create a list to fill in later with all the species for one site 
+    
+    my_file=read.csv(paste0(getwd(), "/Data/Flowers/Sites/", sites[[ss]]))
+    
+    my_file <- my_file[my_file$year %in% mw:(mw+4),]
+    
+    if(NROW(my_file) > 0) {
+      
+    for(sp in unique(my_file$Species)){
+      
+      dat.sp <- my_file[my_file$Species == sp,] # Distinguish between all Species within all sites
+      dat.sp <- dat.sp[order(dat.sp$Tree.ID, dat.sp$jmonth),]
+      
+      tree_ls <- list()
+      
+      for (i in unique(dat.sp$Tree.ID)){
+        mon1 <-  dat.sp$jmonth[dat.sp$Tree.ID == i]  ### using numeric indexing we extract jmonth; for every Tree iD; raw data  
+        mon <- min(mon1, na.rm=T):max(mon1, na.rm=T) #min till max: completes the numbers with the missing jmonth 
+        dat <- rep(NA, NROW(mon)) # repllicates NA in the length of mon (95)
+        dat1 <- dat.sp$value[dat.sp$Tree.ID == i]   # Finds flowering score for every tree ID
+        used.mons <- mon %in% mon1 #what is in mon1 and not in mon 
+        
+        
+        if(sum(used.mons) != NROW(dat1)){ #if used.mons is not equal to dat1; length wise 
+          dups <- duplicated(mon1) # no duplicates in  mon1, the initial jmonth in our data
+          mon1 <- mon1[!dups]# ! logical operator (negative). 
+          dat1 <- dat1[!dups]
+          used.mons <- mon %in% mon1
+        }
+        
+        dat[used.mons] <- dat1 
+        dat.nas <- (is.na(dat)) * unlist(lapply(rle(is.na(dat))$lengths, seq_len))  ## finds conequtive NAs in the value column 
+        #print(sum(!is.na(dat)))
+        
+        if(sum(!is.na(dat))>2) {
+          dat[is.na(dat)] <- approx(x= mon[!is.na(dat)], y = dat[!is.na(dat)], xout = mon[is.na(dat)] )$y  ##interpolates all NAs - linear
+          
+          
+          ## If gaps are too long, cut dataset
+          if(any(dat.nas>3)){ # if gaps are longer than 3 months then cut 
+            data_list <- list()
+            cuts <- which(dat.nas>3) # cuts where there is more than 3 NAs in consecutive 3 months 
+            cuts <- c(cuts, NROW(dat.nas) + 1)  ## need to add to the cuts the last value in the vector - but plus one because the code below assumes that the cut vector identifies the first na, not the last non-na and the last value is required.
+            bot <- 1
+            for (j in 1:NROW(cuts)){
+              dat_l <- dat[bot:(cuts[j] - 1)]   ### cuts original data using the positions of the first value that is not na and last one before a cut(cuts identify the FIRST na values, not the last non na)
+              mon_l <- mon[bot:(cuts[j] - 1 )]
+              dat_l <- dat_l[!is.na(dat_l)]   ### removes residual nas left at start of sequence if only 3 - approx does not extrapolate.
+              mon_l <- mon_l[!is.na(dat_l)]
+              if(NROW(dat_l) > 3){
+                data_list[[j]] <- list(dat_l, mon_l)
+              }
+              bot <- cuts[j] + 1
+              
+            }
+            
+            data_list <- data_list[unlist(lapply(data_list, NROW))>0]
+            tree.ts <- lapply(data_list, ts_fun) #apply the ts_function on data_list 
+            if(NROW(tree.ts)>0) names(tree.ts) <- paste0(i, letters[1:NROW(tree.ts)])
+            tree_ls <- c(tree_ls, tree.ts)
+            
+          } else { 
+            mon <- mon[!is.na(dat)] # mon takes all the values that are not NAs 
+            dat <- dat[!is.na(dat)] # dat takes all the values that are not NAs 
+            data_list <- list(dat, mon) # creates a list where 
+            
+            
+            tree.ts <- ts_fun(data_list)
+            tree_ls <- c(tree_ls, list( tree.ts))
+            names(tree_ls)[NROW(tree_ls)] <- i
+          }
+        }
+      }
+#      if(NROW(tree_ls) > 0)   names(tree_ls) <- as.character(1:(NROW(tree_ls)))
+      tree_ls <- tree_ls[lapply(tree_ls, NROW)>59]  ### Strips any fragments of time series less than 60 months long
+      tree_ls <- tree_ls[lapply(tree_ls, sum)>0]  ### Strips any trees that never flower
+      
+      # combine each species
+      data_ls[[sp]]<-tree_ls
+    }
+    }
+    data_ls <- data_ls[lapply(data_ls, NROW)>9]   ### strips any species with fewer than 10 individuals that flowered
+    big_list.mw[[ss]]=data_ls
+  }
+  
+  names(big_list.mw) <- unlist(lapply(strsplit(sites, "_"), function(x) x[1]))
+  
+  ## catch results here':   
+  all.big_lists[[mw-1985]] <- big_list.mw
+}
+
+new.big.list=list()
+
+for(i in 1:26){
+  new.big.list[[i]]<-all.big_lists[[i]][which(as.numeric(summary(all.big_lists[[i]])[,1])!=0)]
+  }
+
+new.big.list[[26]]<-NULL
+new.big.list[[25]]<-NULL
+new.big.list[[24]]<-NULL
+new.big.list[[23]]<-NULL
+new.big.list[[1]]<-NULL
+
+
+years <- c("1987-1991","1988-1992","1989-1993","1990-1994","1991-1995","1992-1996",
+             "1993-1997","1994-1998","1995-1999","1996-2000","1997-2001","1998-2002","1999-2003","2000-2004",
+             "2001-2005","2002-2006","2003-2007","2004-2008","2005-2009","2006-2010","2007-2011")
+
+for (j in 1:21){
+  names(new.big.list)[[j]]<- years[j]
+}
+
+###########################################################################################################################
+###################################### RESULTS TABLE  #####################################################################
+###########################################################################################################################
+
+
+spec_fun<-function(x) spectrum(x,spans=spans_comb[[which.min(abs(months_comb-length(x)))]],
+                               plot=F,demean=T,detrend=T) #spectrum function for normal smoother periodogram
+spec_null_fun<-function(x) spectrum(x,spans=spans_super_smooth_comb[[which.min(abs(months_comb-length(x)))]] ,plot=F,demean=T,detrend=T) #spectrum function for null hypothesis spectrum
+
+spec_fun_a <-function(x) {
+  spec <- spectrum(x,spans=spans_comb[[which.min(abs(months_comb-length(x)))]],
+                   plot=F,demean=T,detrend=T) #spectrum function for normal smoother periodogram
+  a <- 0
+  for (i in 2: NROW(spec$spec)){
+    a <- a + ((spec$freq[i]/12 - spec$freq[i-1]/12) * 
+                ((spec$spec[i] + spec$spec[i-1])/2))
+  }
+  a
+}
+
+confidence_fun<-function(p, ind_ls = unique(new.big.list[[1]][[1]][[2]])){
+  ts<-ind_ls[[p]]
+  d<-data.frame(ID=p)
+  d$length<-length(ts)
+  d$freq_max<-(spec_fun(ts)$freq[which.max(spec_fun(ts)$spec)])/12
+  d$spec_max<-max(spec_fun(ts)$spec)
+  d$spec_max_norm<-d$spec_max/spec_fun_a(ts) #normalise spectrum so can compare between sites
+  d$df<-spec_fun(ts)$df
+  d$bw_smooth<-spec_fun(ts)$bandwidth
+  d$bw_super_smooth<-spec_null_fun(ts)$bandwidth
+  d$lower_ci<-(d$df*d$spec_max)/(qchisq(c(0.975),d$df))
+  d$null_spec_max<-spec_null_fun(ts)$spec[which(abs((spec_null_fun(ts)$freq)/12-d$freq_max)==min(abs((spec_null_fun(ts)$freq)/12-d$freq_max)))]                 
+  d$sig_null<-d$lower_ci>d$null_spec_max #If the null spectrum is lower than the lower confidence interval, dominant peak can be considered "signficantly different" to null hypothesis
+  data.frame(d)
+}
+
+##Spans
+#The following lists give appropriate successive spans for the corresponding
+#length of data to give a smoothed periodogram with bandwidth in magnitude of
+#0.1 (spans_comb) and a null continuum smoother periodogram with bandwidth in
+#magnitude of 1 (spans_super_smooth_comb)
+months_comb<-c(2,4,6,8,10,12,14,16,18,20,22,24,26,28,30)*12
+spans_comb<-list(3,3,3,3,c(3,3),c(3,5),c(3,5),c(5,5),c(5,5),c(5,7),c(5,7),c(7,7),c(7,9),c(7,9),c(7,9))
+spans_super_smooth_comb<-list(c(5,7),c(11,11),c(15,17),c(19,21),c(25,27),c(29,31),c(35,37),c(39,41),c(43,45),c(47,49),c(55,57),c(59,61),c(65,67),c(73,75),c(75,79))#spans_smooth_fun<-function(x) ifelse(odd(round(sqrt(sqrt(x))))==TRUE,round(sqrt(sqrt(x))),round(sqrt(sqrt(x)))+1)
+
+# Run loop to apply spectrum functions to each individual time series - currently using only tree species 1 (data_ls[[1]])
+confidence_results<-ldply(1:length(unique(new.big.list[[1]][[1]][[2]])),.fun=confidence_fun, ind_ls = unique(new.big.list[[1]][[1]][[2]]))  ### CMB
+
+#Summary of frequency of dominant cycle (wavelength = 1/freq)
+summary(confidence_results$freq_max)
+Dominant_wavelength<-round(1/median(confidence_results[confidence_results$sig_null==T,]$freq_max))
+#Dominant_wavelength<-6 # this was used to detect the accurate phase for the frequency of 6 months;
+## Find phase of significant dominant cycles and assess synchroncity between individuals
+
+#Functions
+spec_cross_fun<-function(x)spec.pgram(x,spans=spans_comb[[which.min(abs(months_comb-length(x)))]] ,demean=T,detrend=T,plot=F)
+
+phase_fun<-function(p, ind_ls = unique(new.big.list[[1]][[1]][[2]])){
+  ts_cross<-ts.intersect(simulated_phase_ts,ind_ls[[p]])
+  d<-data.frame(ID=p)
+  d$freq<-1/12*spec_cross_fun(ts_cross)$freq[which.max(spec_cross_fun(ts_cross)$spec[,1])]
+  d$phase<-spec_cross_fun(ts_cross)$phase[which.max(spec_cross_fun(ts_cross)$spec[,1])]
+  d$coh<-spec_cross_fun(ts_cross)$coh[which.max(spec_cross_fun(ts_cross)$spec[,1])]
+  d
+}
+
+#Simulate a "template" time series using dominant wavelength identified above
+#with phase 0 to act as guide in co-Fourier analysis
+simulated_phase<-list(t=1:360,sd=0,w=2*pi*(1/Dominant_wavelength),R=4,p=0,ts=NA)
+simulated_phase$ts<-simulated_phase$R*cos(simulated_phase$w*simulated_phase$t+simulated_phase$p)
+
+simulated_phase_ts<-ts(simulated_phase$ts,start=c(1986,1),freq=12)
+
+# Run loop to apply co-fourier spectrum function to each individual time series
+# in combination with simulated guide time series to identify phase
+phase_results<-ldply(1:length(new.big.list[[1]][[1]][[2]]),.fun=phase_fun, ind_ls = new.big.list[[1]][[1]][[2]])   ### only for first species in list at the moment CMB
+results<-cbind(confidence_results,phase_results[,c(1,3,4)])
+
+results <- data.frame(ID =NA, length =NA, freq_max =NA,   spec_max=NA, spec_max_norm=NA,
+                      df=NA,   bw_smooth =NA, bw_super_smooth=NA,  lower_ci=NA,  
+                      null_spec_max=NA,  sig_null=NA, freq = NA,   phase=NA, coh=NA, species = NA, site =NA, window=NA)
+
+results <- results[!is.na(results[,1]),]
+
+for(mw in 1:NROW(new.big.list)){ #goes through every window (21 in total)
+  for(ss in 1:NROW(new.big.list[[mw]])){# goes through every species witin every mw
+    for (sp in 1:length(new.big.list[[mw]][[ss]])){# goes through every individual within every species 
+      confidence_results<-ldply(names(new.big.list[[mw]][[ss]][[sp]]),.fun=confidence_fun, ind_ls = new.big.list[[mw]][[ss]][[sp]])  ### CMB
+      phase_results<-ldply(1:length(new.big.list[[mw]][[ss]][[sp]]),.fun=phase_fun, ind_ls = new.big.list[[mw]][[ss]][[sp]])   ### 
+      results.t <-cbind(confidence_results,phase_results[,c("freq","phase","coh")])
+      results.t  <- results.t[!is.nan(results.t$spec_max_norm),]
+      results.t$species <- names(new.big.list[[mw]][[ss]])[sp]
+      results.t$site <-  names(new.big.list[[mw]])[ss]
+      results.t$window <- names(new.big.list)[mw]
+      results <- rbind(results, results.t)
+    }
+  }
+}
+
+a<-(2*pi/12)
+results$phase_month <-ifelse(results$phase > 0, results$phase_month <- (results$phase)/a,((results$phase)+(2*pi)) / a)
+results$freq_in_months<-1/results$freq_max
+
+results$cyclicity<-ifelse(1/results$freq_max>results$length/2,"No cyclicity","Cyclicity")
+results$cycle_category<-ifelse(1/results$freq_max>results$length/2,"No cyclicity",
+                               ifelse(1/results$freq_max>13,"Supra-annual",
+                                      ifelse(1/results$freq_max>11,"Annual","Sub-annual")))
+
+results<-results[!results$cycle_category== "No cyclicity", ]#remove the ones that do not have any cyclycity - approx 600 were removed
+
+#write.csv(results, "Data/MovingWindow6.csv")
+write.csv(results, "Data/Flowers/MovingWindow.csv")
+#write.csv(results, "Data/Flowers/MovingWindow6.csv")
